@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Card, Row, Col, Button, Table, Space, Typography, App, Segmented, Tag, Divider, Statistic, Alert } from 'antd';
-import { WalletOutlined, ThunderboltFilled, CreditCardOutlined, HistoryOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { billing as billingApi } from '../api';
+import { useEffect, useState, useCallback } from 'react';
+import { Card, Row, Col, Button, Table, Space, Typography, App, Segmented, Tag, Divider, Statistic, Alert, Modal } from 'antd';
+import { WalletOutlined, ThunderboltFilled, CreditCardOutlined, HistoryOutlined, SafetyCertificateOutlined, QrcodeOutlined } from '@ant-design/icons';
+import { billing as billingApi, pay as payApi } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { designTokens } from '../theme';
 
@@ -17,6 +17,11 @@ export default function Billing() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [balance, setBalance] = useState(user?.balance ?? 0);
+  const [payMode, setPayMode] = useState('mock');
+  const [payType, setPayType] = useState('alipay');
+  const [payOpen, setPayOpen] = useState(false);
+  const [payUrl, setPayUrl] = useState('');
+  const [payOrderNo, setPayOrderNo] = useState('');
 
   const load = async () => {
     try {
@@ -35,17 +40,45 @@ export default function Billing() {
     if (!(v > 0)) return message.warning('请输入有效的充值金额');
     setLoading(true);
     try {
-      const r = await billingApi.recharge(v);
-      setBalance(r.balance);
-      message.success(r.message || '充值成功');
-      await refresh();
-      load();
+      if (payMode === 'online') {
+        // 在线支付：创建订单并跳转收银台
+        const r = await payApi.create({ amount: v, pay_type: payType });
+        setPayUrl(r.url);
+        setPayOrderNo(r.order_no);
+        setPayOpen(true);
+        startPolling(r.order_no);
+      } else {
+        const r = await billingApi.recharge(v);
+        setBalance(r.balance);
+        message.success(r.message || '充值成功');
+        await refresh();
+        load();
+      }
     } catch (e) {
       message.error(e?.response?.data?.error || '充值失败');
     } finally {
       setLoading(false);
     }
   };
+
+  // 轮询支付订单状态
+  const startPolling = useCallback((orderNo) => {
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries++;
+      try {
+        const s = await payApi.status(orderNo);
+        if (s.status === 'paid') {
+          clearInterval(timer);
+          setPayOpen(false);
+          message.success('支付成功，已到账！');
+          await refresh();
+          load();
+        }
+      } catch (e) { /* ignore */ }
+      if (tries >= 120) clearInterval(timer);
+    }, 3000);
+  }, []);
 
   const columns = [
     { title: '时间', dataIndex: 'created_at', width: 180, render: (v) => <span style={{ fontSize: 12, color: t.textTertiary }}>{v}</span> },
@@ -55,7 +88,7 @@ export default function Billing() {
       align: 'right',
       render: (v) => <span className="serif" style={{ fontWeight: 700, color: t.primary, fontSize: 15 }}>+ ¥{Number(v).toFixed(2)}</span>,
     },
-    { title: '方式', dataIndex: 'method', width: 120, render: () => <Tag style={{ borderRadius: 20 }}>模拟支付</Tag> },
+    { title: '方式', dataIndex: 'method', width: 120, render: (v) => <Tag style={{ borderRadius: 20 }}>{v === 'mock' ? '模拟支付' : v === 'epay' ? '在线支付' : v}</Tag> },
     { title: '状态', dataIndex: 'status', width: 110, render: () => <Tag color="success" style={{ borderRadius: 20 }}>已到账</Tag> },
   ];
 
@@ -111,6 +144,28 @@ export default function Billing() {
               ))}
             </div>
 
+            <Text style={{ fontSize: 13, color: t.textSecondary, display: 'block', marginBottom: 8 }}>支付方式</Text>
+            <Segmented
+              value={payMode}
+              onChange={setPayMode}
+              options={[
+                { label: '模拟支付', value: 'mock' },
+                { label: '在线支付', value: 'online' },
+              ]}
+              style={{ marginBottom: 12 }}
+            />
+            {payMode === 'online' && (
+              <Segmented
+                value={payType}
+                onChange={setPayType}
+                options={[
+                  { label: '支付宝', value: 'alipay' },
+                  { label: '微信支付', value: 'wechat' },
+                ]}
+                style={{ marginBottom: 12 }}
+              />
+            )}
+
             <Space.Compact style={{ width: '100%' }}>
               <Button icon={<ThunderboltFilled />} style={{ pointerEvents: 'none', background: 'transparent' }}>¥</Button>
               <input
@@ -130,17 +185,23 @@ export default function Billing() {
                   outline: 'none',
                 }}
               />
-              <Button type="primary" loading={loading} onClick={() => doRecharge()} icon={<CreditCardOutlined />}>
-                立即充值
+              <Button type="primary" loading={loading} onClick={() => doRecharge()} icon={payMode === 'online' ? <QrcodeOutlined /> : <CreditCardOutlined />}>
+                {payMode === 'online' ? '扫码支付' : '立即充值'}
               </Button>
             </Space.Compact>
 
             <Alert
-              type="info"
+              type={payMode === 'online' ? 'warning' : 'info'}
               showIcon
               style={{ marginTop: 16, borderRadius: 10 }}
-              message="演示环境：充值为模拟支付"
-              description={<span style={{ fontSize: 12 }}>点击充值即视为支付成功，金额立即到账，不产生真实扣款。</span>}
+              message={payMode === 'online' ? '在线支付' : '模拟支付'}
+              description={
+                <span style={{ fontSize: 12 }}>
+                  {payMode === 'online'
+                    ? '跳转到支付网关完成付款，支付成功后自动到账（需管理员已配置支付网关）。'
+                    : '点击充值即视为支付成功，金额立即到账，不产生真实扣款。'}
+                </span>
+              }
             />
           </Card>
         </Col>
@@ -187,6 +248,31 @@ export default function Billing() {
           </Row>
         </Col>
       </Row>
+
+      <Modal
+        open={payOpen}
+        title={<Space><QrcodeOutlined style={{ color: t.primary }} />在线支付</Space>}
+        onCancel={() => setPayOpen(false)}
+        footer={null}
+        width={440}
+      >
+        <div style={{ textAlign: 'center', padding: '8px 0' }}>
+          <Text style={{ fontSize: 14, color: t.textSecondary }}>订单号：<Text code>{payOrderNo}</Text></Text>
+          <div style={{ margin: '16px 0' }}>
+            <iframe
+              src={payUrl}
+              title="支付"
+              style={{ width: '100%', height: 420, border: `1px solid ${t.border}`, borderRadius: 10 }}
+            />
+          </div>
+          <Text style={{ fontSize: 12, color: t.textTertiary, display: 'block' }}>
+            完成支付后此页面会自动检测到账；如未跳转可点击下方按钮。
+          </Text>
+          <Button type="primary" style={{ marginTop: 12 }} onClick={() => window.open(payUrl, '_blank')}>
+            打开支付页面
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

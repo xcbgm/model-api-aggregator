@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Button, Card, Form, Input, Tabs, Typography, App, Segmented, Divider, Space, Tag } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined, MailOutlined, SunOutlined, MoonOutlined, SendOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { auth } from '../api';
+import { auth, emailCode } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { designTokens } from '../theme';
 
@@ -11,6 +11,9 @@ const { Title, Text } = Typography;
 export default function Login() {
   const [tab, setTab] = useState('login');
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const regFormRef = useRef(null);
   const { login, themeMode, toggleTheme } = useAuth();
   const nav = useNavigate();
   const { message } = App.useApp();
@@ -42,6 +45,30 @@ export default function Login() {
       message.error(e?.response?.data?.error || '注册失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const sendCode = async () => {
+    try {
+      const email = await regFormRef.current?.getFieldValue('email');
+      if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        message.warning('请先填写正确的邮箱');
+        return;
+      }
+      setSending(true);
+      await emailCode.send({ email, purpose: 'register' });
+      message.success('验证码已发送，请查收邮箱');
+      setCountdown(60);
+      const timer = setInterval(() => {
+        setCountdown((c) => {
+          if (c <= 1) { clearInterval(timer); return 0; }
+          return c - 1;
+        });
+      }, 1000);
+    } catch (e) {
+      message.error(e?.response?.data?.error || '发送失败');
+    } finally {
+      setSending(false);
     }
   };
 
@@ -198,12 +225,22 @@ export default function Login() {
                 key: 'register',
                 label: '注册新账号',
                 children: (
-                  <Form layout="vertical" onFinish={onRegister} requiredMark={false} size="large">
+                  <Form ref={regFormRef} layout="vertical" onFinish={onRegister} requiredMark={false} size="large">
                     <Form.Item name="username" rules={[{ required: true, min: 3, message: '用户名至少 3 个字符' }]}>
                       <Input prefix={<UserOutlined />} placeholder="用户名" autoComplete="username" />
                     </Form.Item>
                     <Form.Item name="email" rules={[{ type: 'email', message: '邮箱格式不正确' }]}>
-                      <Input prefix={<MailOutlined />} placeholder="邮箱（选填）" />
+                      <Input prefix={<MailOutlined />} placeholder="邮箱（选填，用于找回密码）" />
+                    </Form.Item>
+                    <Form.Item name="email_code" extra="管理员开启邮箱验证后必填；未开启可留空">
+                      <Input
+                        placeholder="邮箱验证码"
+                        addonAfter={
+                          <Button type="link" size="small" icon={<SendOutlined />} loading={sending} disabled={countdown > 0} onClick={sendCode} style={{ padding: 0, height: 'auto' }}>
+                            {countdown > 0 ? `${countdown}s` : '发送验证码'}
+                          </Button>
+                        }
+                      />
                     </Form.Item>
                     <Form.Item name="password" rules={[{ required: true, min: 6, message: '密码至少 6 位' }]}>
                       <Input.Password prefix={<LockOutlined />} placeholder="密码（至少 6 位）" autoComplete="new-password" />

@@ -13,6 +13,7 @@ import Billing from './pages/Billing';
 import Logs from './pages/Logs';
 import Users from './pages/Users';
 import Settings from './pages/Settings';
+import SystemSettings from './pages/SystemSettings';
 
 function Guard({ children, adminOnly }) {
   const { user, loading, isAdmin } = useAuth();
@@ -76,6 +77,14 @@ export default function App() {
           element={
             <Guard adminOnly>
               <Users />
+            </Guard>
+          }
+        />
+        <Route
+          path="system-settings"
+          element={
+            <Guard adminOnly>
+              <SystemSettings />
             </Guard>
           }
         />

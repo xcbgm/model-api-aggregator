@@ -8,6 +8,9 @@ import {
   RiseOutlined,
   ReloadOutlined,
   ArrowRightOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons';
 import {
   AreaChart,
@@ -157,6 +160,41 @@ export default function Dashboard() {
           />
         </Col>
       </Row>
+
+      {/* 模型在线状态（真实探测数据） */}
+      {isAdmin && (
+        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+          <Col xs={24} sm={12} xl={8}>
+            <StatCard
+              themeMode={themeMode}
+              label="在线模型"
+              value={`${data?.onlineModels ?? 0} / ${data?.modelCount ?? 0}`}
+              foot={`已探测 ${data?.probedModels ?? 0} 个`}
+              icon={<CheckCircleOutlined />}
+              tone={(data?.onlineModels ?? 0) > 0 ? 'success' : 'primary'}
+            />
+          </Col>
+          <Col xs={24} sm={12} xl={8}>
+            <StatCard
+              themeMode={themeMode}
+              label="平均延迟"
+              value={data?.avgLatency != null ? `${data.avgLatency}ms` : '—'}
+              foot="在线模型平均响应"
+              icon={<ClockCircleOutlined />}
+            />
+          </Col>
+          <Col xs={24} sm={12} xl={8}>
+            <StatCard
+              themeMode={themeMode}
+              label="接入厂商"
+              value={data?.vendorCount ?? '—'}
+              foot="平台已接入厂商数"
+              icon={<CloudServerOutlined />}
+              tone="gold"
+            />
+          </Col>
+        </Row>
+      )}
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} xl={16}>

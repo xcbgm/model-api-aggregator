@@ -15,6 +15,7 @@ import {
   LogoutOutlined,
   MenuOutlined,
   ThunderboltFilled,
+  MailOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -43,6 +44,7 @@ function useNavItems() {
           { key: '/groups', icon: <PartitionOutlined />, label: '模型分组' },
           { key: '/models', icon: <ThunderboltFilled />, label: '模型与定价' },
           { key: '/users', icon: <TeamOutlined />, label: '用户管理' },
+          { key: '/system-settings', icon: <MailOutlined />, label: '系统设置' },
         ],
       },
     ];

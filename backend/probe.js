@@ -58,7 +58,27 @@ function rawStream(urlStr, { method = 'GET', headers = {}, body = null, timeout 
 }
 
 function joinUrl(base, p) {
-  return base.replace(/\/+$/, '') + '/' + p.replace(/^\/+/, '');
+  // 智能处理：如果 base 已经包含 /v1，且 p 也以 /v1 开头，则避免重复
+  const baseClean = base.replace(/\/+$/, '');
+  const pClean = p.replace(/^\/+/, '');
+  if (baseClean.endsWith('/v1') && pClean.startsWith('v1/')) {
+    // base 已含 /v1，p 去掉 v1 前缀
+    return baseClean + '/' + pClean.replace(/^v1\//, '');
+  }
+  return baseClean + '/' + pClean;
+}
+
+/* ---------------- 模型类型/端点自动识别 ---------------- */
+// 根据上游返回的错误提示、模型名推断正确的端点与类型
+function detectEndpoint(errMsg = '', name = '') {
+  const e = (errMsg || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  if (e.includes('/v1/ocr') || e.includes('ocr') || n.includes('ocr') || n.includes('mineru')) return { type: 'ocr', path: '/v1/ocr' };
+  if (e.includes('/v1/audio/speech') || e.includes('audio/speech') || n.includes('omnivoice') || n.includes('tts')) return { type: 'audio', path: '/v1/audio/speech' };
+  if (e.includes('/v1/audio/transcriptions') || n.includes('whisper') || n.includes('asr')) return { type: 'audio', path: '/v1/audio/transcriptions' };
+  if (e.includes('/v1/embeddings') || n.includes('embedding') || n.includes('bge') || n.includes('m3e')) return { type: 'embedding', path: '/v1/embeddings' };
+  if (e.includes('/v1/images') || n.includes('dall-e') || n.includes('stable-diffusion') || n.includes('image')) return { type: 'image', path: '/v1/images/generations' };
+  return { type: 'chat', path: '/v1/chat/completions' };
 }
 
 /* ---------------- 单模型探测 ---------------- */
@@ -93,11 +113,38 @@ async function probeModel({ base_url, api_key, protocol = 'openai', name, timeou
         const j = JSON.parse(r.text);
         msg = j.error?.message || j.message || msg;
       } catch (e) { /* ignore */ }
-      return { online: false, latency_ms: totalMs, ttft_ms: null, error: msg.slice(0, 200) };
+      // 若错误提示指向其他端点，尝试用正确端点重试（非 chat 模型）
+      const det = detectEndpoint(msg, name);
+      if (det.type !== 'chat') {
+        const retry = await probeWithEndpoint({ base_url, headers, name, endpoint: det.path, timeout, t0 });
+        if (retry.online) return { ...retry, detected_type: det.type, detected_endpoint: det.path };
+        return { online: false, latency_ms: totalMs, ttft_ms: null, error: msg.slice(0, 200), detected_type: det.type, detected_endpoint: det.path };
+      }
+      return { online: false, latency_ms: totalMs, ttft_ms: null, error: msg.slice(0, 200), detected_type: 'chat', detected_endpoint: path };
     }
-    return { online: true, latency_ms: totalMs, ttft_ms: ttft, error: null };
+    return { online: true, latency_ms: totalMs, ttft_ms: ttft, error: null, detected_type: isAnthropic ? 'chat' : 'chat', detected_endpoint: path };
   } catch (e) {
-    return { online: false, latency_ms: Date.now() - t0, ttft_ms: null, error: (e.message || '探测失败').slice(0, 200) };
+    return { online: false, latency_ms: Date.now() - t0, ttft_ms: null, error: (e.message || '探测失败').slice(0, 200), detected_type: 'chat', detected_endpoint: path };
+  }
+}
+
+// 用识别出的端点重试探测（embeddings/ocr/audio 等）
+async function probeWithEndpoint({ base_url, headers, name, endpoint, timeout, t0 }) {
+  let payload;
+  if (endpoint.includes('embeddings')) payload = { model: name, input: 'hi' };
+  else if (endpoint.includes('images')) payload = { model: name, prompt: 'hi', n: 1, size: '256x256' };
+  else if (endpoint.includes('audio')) payload = { model: name, input: 'hi' };
+  else payload = { model: name, prompt: 'hi', max_tokens: 16 };
+  try {
+    const r = await rawStream(joinUrl(base_url, endpoint), { method: 'POST', headers, body: payload, timeout });
+    const totalMs = Date.now() - t0;
+    const ok = r.status >= 200 && r.status < 300;
+    if (ok) return { online: true, latency_ms: totalMs, ttft_ms: r.firstAt ? r.firstAt - t0 : totalMs, error: null };
+    let msg = `上游状态码 ${r.status}`;
+    try { const j = JSON.parse(r.text); msg = j.error?.message || j.message || msg; } catch (e) { /* ignore */ }
+    return { online: false, latency_ms: totalMs, ttft_ms: null, error: msg.slice(0, 200) };
+  } catch (e) {
+    return { online: false, latency_ms: Date.now() - t0, ttft_ms: null, error: (e.message || '失败').slice(0, 200) };
   }
 }
 
@@ -198,4 +245,4 @@ function extractCapabilities(obj = {}) {
   };
 }
 
-module.exports = { probeModel, probeBatch, extractCapabilities, rawStream, joinUrl };
+module.exports = { probeModel, probeBatch, extractCapabilities, detectEndpoint, rawStream, joinUrl };

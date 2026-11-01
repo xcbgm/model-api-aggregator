@@ -23,6 +23,8 @@ db.exec('PRAGMA foreign_keys = ON');
   if (!cols.has('probe_latency_ms')) add('ALTER TABLE models ADD COLUMN probe_latency_ms INTEGER');
   if (!cols.has('probe_ttft_ms')) add('ALTER TABLE models ADD COLUMN probe_ttft_ms INTEGER');
   if (!cols.has('probe_at')) add('ALTER TABLE models ADD COLUMN probe_at TEXT');
+  if (!cols.has('probe_error')) add('ALTER TABLE models ADD COLUMN probe_error TEXT');
+  if (!cols.has('endpoint')) add("ALTER TABLE models ADD COLUMN endpoint TEXT DEFAULT ''");
 })();
 
 db.exec(`
@@ -116,6 +118,18 @@ CREATE TABLE IF NOT EXISTS recharges (
   status TEXT NOT NULL DEFAULT 'success',
   remark TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS pay_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  order_no TEXT NOT NULL UNIQUE,
+  amount REAL NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'epay',
+  pay_type TEXT NOT NULL DEFAULT 'alipay',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  paid_at TEXT
 );
 `);
 

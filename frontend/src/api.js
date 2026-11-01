@@ -79,4 +79,20 @@ export const users = {
   update: (id, b) => unwrap(api.put(`/users/${id}`, b)),
 };
 
+export const settings = {
+  get: () => unwrap(api.get('/settings')),
+  save: (b) => unwrap(api.put('/settings', b)),
+  testEmail: (to) => unwrap(api.post('/settings/test-email', { to })),
+};
+
+export const emailCode = {
+  send: (b) => unwrap(api.post('/email/send-code', b)),
+  verify: (b) => unwrap(api.post('/email/verify-code', b)),
+};
+
+export const pay = {
+  create: (b) => unwrap(api.post('/pay/create', b)),
+  status: (orderNo) => unwrap(api.get(`/pay/status/${orderNo}`)),
+};
+
 export default api;

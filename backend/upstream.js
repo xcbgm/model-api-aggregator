@@ -6,7 +6,13 @@ const https = require('https');
 const { URL } = require('url');
 
 function joinUrl(base, p) {
-  return base.replace(/\/+$/, '') + '/' + p.replace(/^\/+/, '');
+  // 智能处理：如果 base 已经包含 /v1，且 p 也以 /v1 开头，则避免重复
+  const baseClean = base.replace(/\/+$/, '');
+  const pClean = p.replace(/^\/+/, '');
+  if (baseClean.endsWith('/v1') && pClean.startsWith('v1/')) {
+    return baseClean + '/' + pClean.replace(/^v1\//, '');
+  }
+  return baseClean + '/' + pClean;
 }
 
 /**

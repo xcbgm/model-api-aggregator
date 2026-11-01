@@ -6,6 +6,9 @@ const { all, get, run } = require('./db');
 const { sign, auth, adminOnly } = require('./auth');
 const { request, joinUrl, fetchUpstreamModels } = require('./upstream');
 const { probeModel, probeBatch, extractCapabilities } = require('./probe');
+const settings = require('./settings');
+const { sendCode, verifyCode, emailEnabled } = require('./emailcode');
+const payment = require('./payment');
 
 const app = express();
 app.use(cors());
@@ -16,11 +19,17 @@ const fail = (res, code, msg) => res.status(code).json({ success: false, error: 
 
 /* ============================ 认证 ============================ */
 app.post('/api/auth/register', (req, res) => {
-  const { username, email, password } = req.body || {};
+  const { username, email, password, email_code } = req.body || {};
   if (!username || !password) return fail(res, 400, '用户名和密码不能为空');
   if (String(username).length < 3) return fail(res, 400, '用户名至少 3 个字符');
   if (String(password).length < 6) return fail(res, 400, '密码至少 6 位');
   if (get('SELECT id FROM users WHERE username = ?', username)) return fail(res, 400, '用户名已存在');
+  // 若邮箱验证码功能已开启，且填写了邮箱，则必须验证
+  if (emailEnabled() && email) {
+    if (!email_code) return fail(res, 400, '请填写邮箱验证码');
+    const v = verifyCode(email, email_code, 'register');
+    if (!v.ok) return fail(res, 400, v.reason);
+  }
   const r = run(
     'INSERT INTO users (username, email, password_hash, role, balance) VALUES (?,?,?,?,?)',
     username, email || null, bcrypt.hashSync(String(password), 10), 'user', 0
@@ -198,8 +207,14 @@ app.post('/api/models/probe', auth, adminOnly, async (req, res) => {
   const now = new Date().toISOString();
   const out = targets.map((x, i) => {
     const r = results[i];
-    run('UPDATE models SET probe_online=?, probe_latency_ms=?, probe_ttft_ms=?, probe_at=? WHERE id=?',
-      r.online ? 1 : 0, r.latency_ms, r.ttft_ms ?? null, now, x.m.id);
+    const newType = r.detected_type && r.detected_type !== 'chat' ? r.detected_type : null;
+    const newEndpoint = r.detected_endpoint || '';
+    run('UPDATE models SET probe_online=?, probe_latency_ms=?, probe_ttft_ms=?, probe_at=?, probe_error=?, endpoint=? WHERE id=?',
+      r.online ? 1 : 0, r.latency_ms, r.ttft_ms ?? null, now, r.error || null, newEndpoint, x.m.id);
+    // 自动纠正模型类型（仅当识别出非 chat 且当前是 chat 时）
+    if (newType && x.m.model_type === 'chat') {
+      run('UPDATE models SET model_type=? WHERE id=?', newType, x.m.id);
+    }
     return { id: x.m.id, name: x.m.name, ...r };
   });
   ok(res, out);
@@ -215,8 +230,13 @@ app.post('/api/models/probe-batch', auth, adminOnly, async (req, res) => {
   targets.forEach((x, i) => {
     const r = results[i];
     if (r.online) online++;
-    run('UPDATE models SET probe_online=?, probe_latency_ms=?, probe_ttft_ms=?, probe_at=? WHERE id=?',
-      r.online ? 1 : 0, r.latency_ms, r.ttft_ms ?? null, now, x.m.id);
+    const newType = r.detected_type && r.detected_type !== 'chat' ? r.detected_type : null;
+    const newEndpoint = r.detected_endpoint || '';
+    run('UPDATE models SET probe_online=?, probe_latency_ms=?, probe_ttft_ms=?, probe_at=?, probe_error=?, endpoint=? WHERE id=?',
+      r.online ? 1 : 0, r.latency_ms, r.ttft_ms ?? null, now, r.error || null, newEndpoint, x.m.id);
+    if (newType && x.m.model_type === 'chat') {
+      run('UPDATE models SET model_type=? WHERE id=?', newType, x.m.id);
+    }
   });
   ok(res, { total: targets.length, online, at: now });
 });
@@ -378,6 +398,9 @@ app.get('/api/dashboard', auth, (req, res) => {
     ORDER BY l.id DESC LIMIT 10`, ...p);
 
   const totalCalls = total.calls || 0;
+  const onlineModels = get('SELECT COUNT(*) c FROM models WHERE status = 1 AND probe_online = 1').c;
+  const probedModels = get('SELECT COUNT(*) c FROM models WHERE status = 1 AND probe_online IS NOT NULL').c;
+  const avgLatency = get(`SELECT AVG(probe_latency_ms) v FROM models WHERE status = 1 AND probe_online = 1 AND probe_latency_ms IS NOT NULL`).v;
   ok(res, {
     today: { calls: today.calls, tokens: today.tokens, cost: today.cost },
     total: { calls: totalCalls, tokens: total.tokens, cost: total.cost },
@@ -386,6 +409,9 @@ app.get('/api/dashboard', auth, (req, res) => {
     trend, topModels, recentErrors,
     balance: req.user.balance,
     modelCount: get('SELECT COUNT(*) c FROM models WHERE status = 1').c,
+    onlineModels, probedModels,
+    avgLatency: avgLatency ? Math.round(avgLatency) : null,
+    vendorCount: isAdmin ? get('SELECT COUNT(*) c FROM vendors').c : undefined,
     userCount: isAdmin ? get('SELECT COUNT(*) c FROM users').c : undefined,
   });
 });
@@ -484,7 +510,8 @@ async function proxyHandler(req, res) {
     return fail(res, 402, '余额不足，请充值');
   }
 
-  const upstreamUrl = joinUrl(model.base_url, req.path.replace(/^\/v1/, '/v1'));
+  // 智能拼接：如果 base_url 已含 /v1，避免重复
+  const upstreamUrl = joinUrl(model.base_url, req.path);
   const headers = { Authorization: `Bearer ${model.vendor_key}`, 'Content-Type': 'application/json' };
   if (model.protocol === 'anthropic') {
     headers['x-api-key'] = model.vendor_key;
@@ -537,6 +564,91 @@ app.post('/v1/chat/completions', proxyHandler);
 app.post('/v1/completions', proxyHandler);
 app.post('/v1/embeddings', proxyHandler);
 app.post('/v1/messages', proxyHandler);
+
+/* ============================ 系统设置（管理员） ============================ */
+app.get('/api/settings', auth, adminOnly, (req, res) => {
+  ok(res, { ...settings.getAll(true), email_enabled: emailEnabled() });
+});
+
+app.put('/api/settings', auth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  settings.saveAll(b);
+  ok(res, { message: '设置已保存', email_enabled: emailEnabled() });
+});
+
+// 测试 SMTP 连通性
+app.post('/api/settings/test-email', auth, adminOnly, async (req, res) => {
+  const to = (req.body || {}).to;
+  if (!to) return fail(res, 400, '请填写收件邮箱');
+  try {
+    const { sendMail } = require('./mailer');
+    await sendMail({ to, subject: '【灵犀模型网关】SMTP 测试邮件', html: '<p style="font-family:sans-serif">这是一封测试邮件，说明 SMTP 配置成功。✅</p>', text: 'SMTP 测试邮件，配置成功。' });
+    ok(res, { message: '测试邮件已发送，请查收' });
+  } catch (e) {
+    fail(res, 500, '发送失败：' + e.message);
+  }
+});
+
+/* ============================ 邮箱验证码 ============================ */
+app.post('/api/email/send-code', (req, res) => {
+  const { email, purpose } = req.body || {};
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 400, '邮箱格式不正确');
+  try {
+    sendCode(email, purpose || 'register');
+    ok(res, { message: '验证码已发送，请查收邮箱' });
+  } catch (e) {
+    fail(res, e.code === 'RATE_LIMIT' ? 429 : 400, e.message);
+  }
+});
+
+app.post('/api/email/verify-code', (req, res) => {
+  const { email, code, purpose } = req.body || {};
+  const r = verifyCode(email, code, purpose || 'register');
+  if (!r.ok) return fail(res, 400, r.reason);
+  ok(res, { message: '验证通过' });
+});
+
+/* ============================ 支付（管理员配置 + 用户下单） ============================ */
+// 用户下单
+app.post('/api/pay/create', auth, async (req, res) => {
+  const { amount, pay_type } = req.body || {};
+  const amt = Number(amount);
+  if (!(amt > 0)) return fail(res, 400, '充值金额必须大于 0');
+  if (amt < 1) return fail(res, 400, '最低充值 1 元');
+  if (amt > 50000) return fail(res, 400, '单次充值不能超过 50000 元');
+  const orderNo = 'LX' + Date.now() + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  try {
+    const r = await payment.createPayment({ amount: amt, orderNo, type: pay_type || 'alipay' });
+    run('INSERT INTO pay_orders (user_id, order_no, amount, provider, pay_type) VALUES (?,?,?,?,?)',
+      req.user.id, orderNo, amt, settings.getSetting('pay_provider'), pay_type || 'alipay');
+    ok(res, { order_no: orderNo, url: r.url, amount: amt });
+  } catch (e) {
+    fail(res, 500, e.message);
+  }
+});
+
+// 支付回调（易支付 notify_url）
+app.all('/api/pay/notify', async (req, res) => {
+  const q = { ...(req.query || {}), ...(req.body || {}) };
+  const v = payment.verifyNotify(q);
+  if (!v.ok) return res.send('fail');
+  const order = get('SELECT * FROM pay_orders WHERE order_no = ?', v.orderNo);
+  if (!order) return res.send('fail');
+  if (order.status === 'paid') return res.send('success');
+  if (v.amount && Math.abs(v.amount - order.amount) > 0.01) return res.send('fail');
+  run('UPDATE pay_orders SET status=?, paid_at=datetime(\'now\',\'localtime\') WHERE id=?', 'paid', order.id);
+  run('UPDATE users SET balance = balance + ? WHERE id = ?', order.amount, order.user_id);
+  run('INSERT INTO recharges (user_id, amount, method, status, remark) VALUES (?,?,?,?,?)',
+    order.user_id, order.amount, settings.getSetting('pay_provider'), 'success', '在线支付 ' + order.order_no);
+  res.send('success');
+});
+
+// 查询订单状态（前端轮询）
+app.get('/api/pay/status/:orderNo', auth, (req, res) => {
+  const o = get('SELECT status, amount FROM pay_orders WHERE order_no = ? AND user_id = ?', req.params.orderNo, req.user.id);
+  if (!o) return fail(res, 404, '订单不存在');
+  ok(res, o);
+});
 
 /* ============================ 健康检查 ============================ */
 app.get('/api/health', (req, res) => ok(res, { status: 'ok', time: new Date().toISOString() }));
