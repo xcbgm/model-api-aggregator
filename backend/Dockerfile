@@ -12,8 +12,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-# 复制源码
-COPY server.js db.js auth.js upstream.js ./
+# 复制源码（.dockerignore 已排除 node_modules / data）
+COPY . .
 
 # 创建数据目录并设置权限（非 root 运行）
 RUN mkdir -p /app/data && chown -R node:node /app

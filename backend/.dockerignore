@@ -1,0 +1,7 @@
+# 后端构建时忽略的目录/文件
+node_modules
+data
+*.log
+npm-debug.log*
+.git
+.env
