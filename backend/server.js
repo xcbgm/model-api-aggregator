@@ -63,7 +63,8 @@ app.post('/api/auth/password', auth, (req, res) => {
 app.get('/api/vendors', auth, adminOnly, (req, res) => {
   const rows = all('SELECT * FROM vendors ORDER BY id DESC').map((v) => ({
     ...v,
-    api_key_masked: v.api_key ? v.api_key.slice(0, 6) + '****' + v.api_key.slice(-4) : '',
+    // 密钥默认完全隐藏，不返回任何片段
+    api_key_set: !!v.api_key,
     model_count: get('SELECT COUNT(*) c FROM models WHERE vendor_id = ?', v.id).c,
     api_key: undefined,
   }));

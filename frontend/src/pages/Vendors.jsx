@@ -83,9 +83,21 @@ export default function Vendors() {
     setOpen(true);
   };
 
+  // 输入厂商名时，若已存在同名厂商则自动套用其模板（调用地址/协议）
+  const onNameChange = (e) => {
+    const name = e.target.value.trim();
+    if (!name) return;
+    const exist = rows.find((r) => r.name === name && r.id !== editing?.id);
+    if (exist && !form.getFieldValue('base_url')) {
+      form.setFieldsValue({ base_url: exist.base_url, protocol: exist.protocol });
+      message.info(`已套用「${exist.name}」的调用地址模板，请确认并填写密钥`);
+    }
+  };
+
   const openEdit = (r) => {
     setEditing(r);
-    form.setFieldsValue({ ...r, api_key: r.api_key_masked });
+    // 密钥默认隐藏：不回填任何密钥片段，留空表示不修改
+    form.setFieldsValue({ ...r, api_key: undefined });
     setOpen(true);
   };
 
@@ -213,9 +225,14 @@ export default function Vendors() {
     { title: '协议', dataIndex: 'protocol', width: 110, render: (v) => <Tag style={{ fontSize: 11 }}>{v}</Tag> },
     {
       title: '密钥',
-      dataIndex: 'api_key_masked',
-      width: 160,
-      render: (v) => <span className="mono" style={{ color: t.textTertiary }}>{v}</span>,
+      dataIndex: 'api_key_set',
+      width: 100,
+      render: (v) =>
+        v ? (
+          <Tag color="success" style={{ borderRadius: 20, fontSize: 11 }}>已配置</Tag>
+        ) : (
+          <Tag color="error" style={{ borderRadius: 20, fontSize: 11 }}>未配置</Tag>
+        ),
     },
     {
       title: '模型数',
@@ -299,7 +316,7 @@ export default function Vendors() {
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="name" label="厂商名称" rules={[{ required: true, message: '请输入厂商名称' }]}>
-                <Input placeholder="如：DeepSeek / 通义千问 / 智谱" />
+                <Input placeholder="如：DeepSeek / 通义千问 / 智谱" onChange={onNameChange} />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -315,16 +332,17 @@ export default function Vendors() {
               { required: true, message: '请输入 API 地址' },
               { pattern: /^https?:\/\//i, message: '需以 http:// 或 https:// 开头' },
             ]}
+            extra="如地址已以 /v1 结尾，系统会自动识别，不会重复拼接"
           >
-            <Input placeholder="https://api.deepseek.com" />
+            <Input placeholder="https://api.deepseek.com 或 https://api.deepseek.com/v1" />
           </Form.Item>
           <Form.Item
             name="api_key"
             label="API 密钥"
             rules={[{ required: !editing, message: '请输入密钥' }]}
-            extra={editing ? '留空或保持掩码表示不修改' : '密钥将加密存储于本地数据库'}
+            extra={editing ? '默认隐藏不显示；留空表示不修改，填写新值则覆盖' : '输入后即时掩码显示，保存后不再回显'}
           >
-            <Input.Password placeholder="sk-..." autoComplete="off" />
+            <Input.Password placeholder={editing ? '留空不修改；填写则更新密钥' : 'sk-...'} autoComplete="new-password" />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} placeholder="可选，例如：官方直连 / 代理中转" />
