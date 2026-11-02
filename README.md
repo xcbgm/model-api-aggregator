@@ -209,6 +209,7 @@ model-api-aggregator/
 │   ├── package.json
 │   └── dist/              # 构建产物（生产部署用）
 ├── start.sh               # 一键启动/停止/状态脚本
+├── deploy.sh              # 镜像发布/拉取脚本
 ├── docker-compose.yml     # 容器化部署
 ├── backend/Dockerfile
 ├── frontend/Dockerfile
@@ -221,14 +222,44 @@ model-api-aggregator/
 
 ## 🐳 Docker 部署
 
+### 方式一：拉取已发布镜像（推荐）
+
 ```bash
+git clone https://github.com/xcbgm/model-api-aggregator.git
 cd model-api-aggregator
-docker compose up -d --build
+
+# 设置 JWT 密钥（生产环境必改）
+echo 'JWT_SECRET=你的随机密钥' > .env
+
+docker compose pull
+docker compose up -d
 # 访问 http://localhost:8080
 ```
 
+### 方式二：本地构建
+
+```bash
+cd model-api-aggregator
+docker compose up -d --build
+```
+
+### 📤 发布镜像到 GHCR（仓库维护者）
+
+首次发布镜像，在一台装有 Docker 的机器上执行：
+
+```bash
+# 1. 创建 GitHub Token（经典 PAT 勾选 write:packages）
+export GH_TOKEN=ghp_xxx
+
+# 2. 构建并推送
+./deploy.sh push
+```
+
+`deploy.sh` 会自动登录 GHCR、构建前后端镜像并推送。之后任何人都可 `docker compose pull` 部署。
+
 **端口映射**：
 - `8080` → Nginx（托管前端静态资源 + 反代 `/api` `/v1` 到 backend:3001）
+- `3001` → 后端 API
 - 数据卷：`./backend/data:/app/data`（持久化 SQLite）
 
 **生产建议**：

@@ -1,7 +1,22 @@
-version: '3.8'
+# 灵犀模型聚合 - Docker Compose
+# ------------------------------------------------------------------
+# 两种使用方式：
+#
+# 1) 拉取已发布镜像（推荐，快速部署）
+#    docker compose pull
+#    docker compose up -d
+#
+# 2) 本地构建（无镜像或想改代码时）
+#    docker compose up -d --build
+#
+# 镜像地址：ghcr.io/xcbgm/model-api-aggregator/{backend,frontend}:latest
+# 首次发布镜像请执行：./deploy.sh push
+
+name: model-api-aggregator
 
 services:
   backend:
+    image: ghcr.io/xcbgm/model-api-aggregator/backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -25,6 +40,7 @@ services:
       - lingxi-net
 
   frontend:
+    image: ghcr.io/xcbgm/model-api-aggregator/frontend:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -43,6 +59,3 @@ services:
 networks:
   lingxi-net:
     driver: bridge
-
-volumes:
-  backend-data:
