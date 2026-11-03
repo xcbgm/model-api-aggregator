@@ -224,6 +224,8 @@ model-api-aggregator/
 
 ### 方式一：拉取已发布镜像（推荐）
 
+> ✅ 镜像已发布到 GHCR，可直接拉取部署。
+
 ```bash
 git clone https://github.com/xcbgm/model-api-aggregator.git
 cd model-api-aggregator
